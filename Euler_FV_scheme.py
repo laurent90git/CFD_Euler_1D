@@ -188,7 +188,7 @@ def HLLC_solver(WL,WR,options):
     uL,PL,EL,HL,aL = out['u'],out['P'], out['E'], out['H'], out['a']
 
     # compute fluxes
-    face_flux = np.zeros_like(WL)
+    face_flux = np.zeros_like(WL)*np.nan # the NaN initialisation allows to spot issues easily
 
     # vectorized mode
     # estimate the wave speeds
@@ -230,9 +230,9 @@ def HLLC_solver(WL,WR,options):
     I = np.where(SR<=0)
     face_flux[:,I] = fluxEulerPhysique(WR[:,I])
     total = total + np.size(I)
-    if total != SR.size: # some faces have not be solved
-#    if np.isnan(SR+SL+Sstar).any():
-        raise Exception('problem HLL UNRESOLVED CASE')
+#     if total != SR.size: # some faces have not be solved
+# #    if np.isnan(SR+SL+Sstar).any():
+#         raise Exception('problem HLL UNRESOLVED CASE')
 
     if bReshaped:
         return face_flux.reshape((face_flux.size,))
@@ -453,8 +453,8 @@ def modelfun(t,x,options):
     # Compute time derivatives of the conserved variables
     time_deriv = (1/options['mesh']['cellSize']) * (face_flux[:,:-1] - face_flux[:,1:])
     time_deriv = getXFromVars(rho=time_deriv[0,:], rhoU=time_deriv[1,:], rhoE=time_deriv[2,:])
-    if np.isnan(time_deriv).any():
-        raise Exception('NaNs in time_deriv, at time t={}'.format(t))
+    # if np.isnan(time_deriv).any():
+    #     raise Exception('NaNs in time_deriv, at time t={}'.format(t))
 
     #### Plots
     if 0:

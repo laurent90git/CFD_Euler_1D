@@ -33,15 +33,17 @@ options['scheme']['reconstruction'] = 1
 options['BCs']['left']['type']  = "reflective"
 options['BCs']['right']['type'] = "reflective"
 
-# Generate the mesh
-xfaces = np.linspace(-10,10,1000)
+# Generate the faces of the mesh
+xfaces = np.linspace(-10,10,100)
+
+# Generate the corresponding mesh
 options['mesh'] = setupFiniteVolumeMesh(xfaces,{})
 xcells = options['mesh']['cellX']
 nx = xcells.size
 options['mesh']['nx']=nx
 
 # Generate the initial condition
-xc = np.mean(xfaces)
+xc = 0.
 P_0 = np.zeros_like(xcells)
 P_0[xcells<xc]  =  1.*1e5
 P_0[xcells>=xc] =  0.1*1e5
@@ -60,10 +62,10 @@ E_0 = cv*T_0 + 0.5*u_0*u_0
 X0 = getXFromVars(rho_0, rho_0*u_0, rho_0*E_0)
 
 rho,rhoU,rhoE = getVarsFromX(x=X0, options=options)
-assert np.all(rho==rhoU) # check that the state vector manipulations are coherent
+assert np.all(rho==rho_0) # check that the state vector manipulations are coherent
 
 # Specifiy the physical duration of the simulation
-tend= 0.2
+tend= 0.01
 
 
 
@@ -131,8 +133,8 @@ if 0:
 #%% NUMERICAL INTEGRATION
 # jacfun=None
 out  = integrate.solve_ivp(fun=lambda t,x: modelfun(t,x,options), t_span=(0.,tend), y0=X0, first_step=1e-9,
-                            max_step=np.inf, method='BDF', atol=1e-6, rtol=1e-6, band=(6,6), jac=jacfun,
-                            t_eval=np.linspace(0, tend,int(1e4)),
+                            max_step=np.inf, method='BDF', atol=1e-5, rtol=1e-5, band=(6,6), jac=jacfun,
+                            # t_eval=np.arange(0, tend, 5e-5),
                             )
 print('{} time steps'.format(len(out.t)))
 
@@ -142,7 +144,7 @@ import json
 outdict= {"options": options,
           "y": out.y,
           't': out.t}
-with open('backup.json','w') as f: #TODO: binary file to save space
+with open('backup2.json','w') as f: #TODO: binary file to save space
   json.dump(outdict, f, cls=NumpyEncoder)
 
 
@@ -179,24 +181,26 @@ T_exact = P_exact/rho_exact/r
 
 plt.figure()
 plt.plot(mesh_exact, rho_exact, color='r', label='exact')
-plt.plot(mesh, rho[:,-1], color='b', label='num', marker='+', linestyle='')
-plt.xlabel('position')
-plt.ylabel(r'$\rho$')
-plt.title('Densité')
+plt.plot(mesh, rho[:,-1], color='b', label='simulation', marker='+', linestyle='')
+plt.xlabel('x (m)')
+plt.ylabel(r'$\rho$ (kg.m$^{-3}$)')
+plt.title('Density')
+plt.legend()
+plt.savefig('comparison_density_FVS_r1l1.png', dpi=300)
 
 plt.figure()
 plt.plot(mesh_exact, u_exact, color='r', label='exact')
 plt.plot(mesh, u[:,-1], color='b', label='num', marker='+', linestyle='')
-plt.xlabel('position')
+plt.xlabel('x (m)')
 plt.ylabel(r'$u$')
-plt.title('Vitesse')
+plt.title('Velocity (m/s)')
 
 plt.figure()
 plt.plot(mesh_exact, P_exact, color='r', label='exact')
 plt.plot(mesh, P[:,-1], color='b', label='num', marker='+', linestyle='')
-plt.xlabel('position')
-plt.ylabel('P')
-plt.title('Pression')
+plt.xlabel('x (m)')
+plt.ylabel('P (Pa)')
+plt.title('Pressure')
 
 #%% Check that the integral of the total energy is conserved
 total_E = np.sum(rhoE.T * options['mesh']['cellSize'], axis=1)
