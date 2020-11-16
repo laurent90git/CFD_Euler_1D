@@ -1,5 +1,5 @@
 # CFD_Euler_1D
-One-dimensional solver for the Euler equation written in Python.
+One-dimensional solver for the compressible Euler equations, written in Python.
 Multiple Riemann solvers (HLLC, Flux Vector Splitting) are implemented, based on [1]. The spatial scheme can be of order 1 (piecewise constant) or 2 (MUSCL-Hancok scheme with linear reconstruction). A minmod limiter is also avaible.
 
 The test script implements the classical Sod shock tube problem, with reflective or transmissive boundaries.
