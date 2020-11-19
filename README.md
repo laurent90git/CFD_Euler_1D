@@ -8,6 +8,8 @@ Here is a comparison of the density field at t=0.01s, for the analytical solutio
 ![comparison](https://raw.githubusercontent.com/laurent90git/CFD_Euler_1D/main/doc/comparison_density_FVS_r1l1_small.png)
 
 Some fancy visualizations can be obtained with this code, for example the following wave diagrams, for a shock tube with reflective boundaries:
+
+
 ![schlieren](https://raw.githubusercontent.com/laurent90git/CFD_Euler_1D/main/doc/schlieren_mode2r1l1_bright_small.png)
 ![T_field](https://raw.githubusercontent.com/laurent90git/CFD_Euler_1D/main/doc/T_mode2r1l1_small.png)
 
