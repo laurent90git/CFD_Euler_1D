@@ -5,6 +5,7 @@ Multiple Riemann solvers (HLLC, Flux Vector Splitting) are implemented, based on
 The test script implements the classical Sod shock tube problem, with reflective or transmissive boundaries.
 
 Here is a comparison of the density field at t=0.01s, for the analytical solution and for the simulation with 100 cells, order 2 reconstruction and Flux Vector Splitting:
+
 ![comparison](https://raw.githubusercontent.com/laurent90git/CFD_Euler_1D/main/doc/comparison_density_FVS_r1l1_small.png)
 
 Some fancy visualizations can be obtained with this code, for example the following wave diagrams, for a shock tube with reflective boundaries:
