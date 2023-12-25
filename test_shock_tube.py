@@ -34,7 +34,7 @@ options['BCs']['left']['type']  = "reflective"
 options['BCs']['right']['type'] = "reflective"
 
 # Generate the faces of the mesh
-xfaces = np.linspace(-10,10,100)
+xfaces = np.linspace(-10,10,1000)
 
 # Generate the corresponding mesh
 options['mesh'] = setupFiniteVolumeMesh(xfaces,{})
@@ -132,12 +132,19 @@ if 0:
 
 #%% NUMERICAL INTEGRATION
 # jacfun=None
-out  = integrate.solve_ivp(fun=lambda t,x: modelfun(t,x,options), t_span=(0.,tend), y0=X0, first_step=1e-9,
-                            max_step=np.inf, method='BDF', atol=1e-5, rtol=1e-5, band=(6,6), jac=jacfun,
-                            # t_eval=np.arange(0, tend, 5e-5),
-                            )
-print('{} time steps'.format(len(out.t)))
-
+if 0:
+  out  = integrate.solve_ivp(fun=lambda t,x: modelfun(t,x,options), t_span=(0.,tend), y0=X0, first_step=1e-9,
+                              max_step=np.inf, method='BDF', atol=1e-5, rtol=1e-5, band=(6,6), jac=jacfun,
+                              # t_eval=np.arange(0, tend, 5e-5),
+                              )
+  print('{} time steps'.format(len(out.t)))
+else:
+  from Euler_FV_scheme import CFLintegration
+  out = CFLintegration(fun=lambda t,x: modelfun(t,x,options),t_span=(0.,tend),cfl=0.3,y0=X0,
+                 methodclass=None, max_step=np.inf,
+                nmax_step=np.inf, relvar_min=None, datalogger=None,
+                jacband=None, limitVars=False,events=None, options=options,
+                logger=print, log_every=0.)
 #%% backup the result
 from utilities import NumpyEncoder
 import json
@@ -186,8 +193,10 @@ plt.xlabel('x (m)')
 plt.ylabel(r'$\rho$ (kg.m$^{-3}$)')
 plt.title('Density')
 plt.legend()
-plt.savefig('comparison_density_FVS_r1l1.png', dpi=300)
+plt.xlim(-10,10); plt.ylim(0,1.1); plt.grid()
+# plt.savefig('comparison_density_FVS_r1l1.png', dpi=300)
 
+#%%
 plt.figure()
 plt.plot(mesh_exact, u_exact, color='r', label='exact')
 plt.plot(mesh, u[:,-1], color='b', label='num', marker='+', linestyle='')
@@ -296,3 +305,18 @@ cb = plt.colorbar()
 cb.set_label('P (Pa)')
 plt.grid()
 plt.title('Exact pressure field')
+
+#%% Test adaptation criterion
+options['mesh']['adapt']={"mode":1,
+                          "atol":1e-2, "rtol":1e-2}
+
+dx_opt = modelfun(t=out.t[-1], x=out.y[:,-1], options=options, estimate_space_error=True)
+
+plt.figure()
+plt.semilogy(options['mesh']['faceX'], dx_opt, label='optimal mesh')
+plt.semilogy(options['mesh']['faceX'],
+         np.hstack((options['mesh']['cellSize'][0], options['mesh']['cellSize'])),
+         label='mesh')
+plt.grid()
+plt.xlim(options['mesh']['faceX'][0], options['mesh']['faceX'][-1])
+plt.legend()

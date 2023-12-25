@@ -40,6 +40,7 @@ def setupFiniteVolumeMesh(xfaces, meshoptions=None):
     meshoptions['cellX'] = 0.5*(xfaces[1:]+xfaces[0:-1]) # center of each cell
     meshoptions['dxBetweenCellCenters'] = np.diff(meshoptions['cellX']) # gap between each consecutive cell-centers
     meshoptions['cellSize'] = np.diff(xfaces) # size of each cells
+    meshoptions['nx'] = xfaces.size-1 # size of each cells
     assert not any(meshoptions['cellSize']==0.), 'some cells are of size 0...'
     assert not any(meshoptions['cellSize']<0.), 'some cells are of negative size...'
     assert not any(meshoptions['dxBetweenCellCenters']==0.), 'some cells have the same centers...'
@@ -47,11 +48,28 @@ def setupFiniteVolumeMesh(xfaces, meshoptions=None):
     # conveniency attributes for backward-compatibility  wtih finite-difference results post-processing
     meshoptions['x']  = meshoptions['cellX']
     meshoptions['dx'] = meshoptions['dxBetweenCellCenters']
+    
+    assert np.all( meshoptions['cellSize'] > 0 )
+    assert np.all( meshoptions['dxBetweenCellCenters'] > 0 )
     return meshoptions
   
 def interfaceRiemannExact(WL,WR,options):
     """ Interface pour utiliser le solveur généreusement fourni par Storcky """
     # W = [rho rhoU, rhoE]
+    # gives the exact solution of the riemann problem at x=0 and t=0
+    if WL.ndim==1: # single face evaluation
+      rho,u,P =  Riemann_exact_from_conserved(t=0.,g=gamma,WL=WL,WR=WR,grid=np.array([0.]))
+      star_state = np.array([rho[0], rho[0]*u[0], 0.5*u[0]*u[0] + P[0]/((gamma-1)*rho[0])]) #same variables as input
+    else:
+      star_state = np.zeros_like(WL)
+      npts = WL.shape[1] 
+      for i in range(npts):
+        rho,u,P =  Riemann_exact_from_conserved(t=0.,g=gamma,WL=WL[:,i],WR=WR[:,i],grid=np.array([0.]))
+        star_state[:,i] = np.array([rho[0], rho[0]*u[0], 0.5*u[0]*u[0] + P[0]/((gamma-1)*rho[0])])
+    return star_state
+
+def Riemann_exact_from_conserved(t,g,WL,WR,grid):
+    """ Interface for use with [rho, rho*u, rho*E] """
     rho, rhoU, rhoE = WL[0], WL[1], WL[2]
     temp = computeOtherVariables(rho, rhoU, rhoE)
     Wl_adapt = [rho, temp['u'], temp['P']]
@@ -61,9 +79,7 @@ def interfaceRiemannExact(WL,WR,options):
     Wr_adapt = [rho, temp['u'], temp['P']]
 
     # gives the exact solution of the riemann problem at x=0 and t=0
-    rho,u,P =  Riemann_exact(t=0., g=gamma, Wl=Wl_adapt, Wr=Wr_adapt, grid=np.array([0.]))
-    star_state = np.array([rho[0], rho[0]*u[0], 0.5*u[0]*u[0] + P[0]/((gamma-1)*rho[0])]) #same variables as input
-    return star_state
+    return  Riemann_exact(t=t, g=gamma, Wl=Wl_adapt, Wr=Wr_adapt, grid=grid)
 
 def Riemann_exact(t,g,Wl,Wr,grid):
     """ Computes the exact solution of the Riemann problem with the state
@@ -331,7 +347,7 @@ def minmax_limiter(Wnew,WR,WL):
   return Wnew
 
 
-def modelfun(t,x,options):
+def modelfun(t,x,options, estimate_space_error=False):
     """ ODE function for Euler equation
     Inputs:
       t: float
@@ -429,7 +445,84 @@ def modelfun(t,x,options):
         
     WL[:,0]  = ghost_state_L
     WR[:,-1] = ghost_state_R
+    
+    if estimate_space_error:
+      if not'adapt' in options['mesh'].keys():
+        raise Exception('no mesh adaptation parameters in options')
+      spaceerrmode =  options['mesh']['adapt']['mode']
+      
+      # compute equivalent dx at each face
+      dx_faces = np.zeros((nx+1,))
+      dx_faces[0] = options['mesh']['cellSize'][0]
+      dx_faces[-1] = options['mesh']['cellSize'][0]
+      dx_faces[1:-1] = 0.5 * ( options['mesh']['cellSize'][1:] + options['mesh']['cellSize'][:-1])
+      
+      if spaceerrmode==0:
+        raise Exception('error')
+        
+      else:  # estimate and direclty return an optimal cell size
+        atol,rtol= options['mesh']['adapt']['atol'], options['mesh']['adapt']['rtol']
+        if spaceerrmode==1: 
+          # 1 - solve unlimited Riemman problems with centered scheme and compare error
+          #     with actual scheme
+          face_flux = solver(WL,WR,options)
+          face_flux_centered = fluxEulerPhysique(W=(WL+WR)/2)
+          err = abs(face_flux - face_flux_centered) / (atol+rtol*np.minimum(abs(face_flux_centered), abs(face_flux)))
+          err = np.max(err, axis=0)
+          dx_opt = dx_faces/np.sqrt(err)
+          
+        elif spaceerrmode==2:
+          # 2 - simply compute the disagreeement etween the second-order reconstructions
+          #     at the faces
+          err = abs(WL - WR) / (atol+rtol*np.minimum(abs(WR), abs(WL)))
+          err = np.max(err, axis=0)
+          dx_opt = dx_faces/np.sqrt(err)
+          
+        elif spaceerrmode==3:
+          # 2 - compare to first-order scheme
+          face_flux = solver(WL,WR,options)
+          
+          WL1 = np.zeros((3,nx+1)) # left state
+          WR1 = np.zeros((3,nx+1)) # right state
+          WL1[:,0] = W[:,0]
+          WL1[:,-1] = W[:,-1]
+          WL1[:,1:] = np.vstack((rho, rhoU, rhoE))
+          WR1[:,:-1] = WL1[:,1:]
+          face_flux_1 = solver(WL1,WR1,options)
+          err = abs(face_flux - face_flux_1) / (atol+rtol*np.minimum(abs(face_flux_1), abs(face_flux)))
+          # the error is O(dx^2) with a MUSCL reconstruction
+          # A * dx_opt^2 = 1
+          # A * dx^2 = err > 1   => dx_opt/dx = sqrt(1/err)
+          err = np.max(err, axis=0)
+          dx_opt = dx_faces/np.sqrt(err)
 
+        elif spaceerrmode==4:
+          # 2 - gradient of density
+          dx_faces = np.hstack((options['mesh']['cellX'][0]-options['mesh']['faceX'][0],
+                                options['mesh']['dxBetweenCellCenters'],
+                                options['mesh']['faceX'][-1]-options['mesh']['cellX'][-1],
+                               ))
+          dx_opt = np.zeros((nx+1),)
+          for i in range(1,nx-1):
+            v1 = rho[:-1]
+            v2 = rho[1:]
+            err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
+            dx_opt[1:-1] = dx_faces[1:-1] / err
+          # boundaries
+          v1 = WL[0,0]
+          v2 = rho[0]
+          err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
+          dx_opt[0] = dx_faces[0] / err
+          
+          v1 = WL[0,-1]
+          v2 = rho[-1]
+          err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
+          dx_opt[-1] = dx_faces[-1] / err
+        
+        else:
+          raise Exception(f'Space error estimation method {spaceerrmode} does not exist')
+      return dx_opt
+    
     # Limit the states
     WL[:,1:-1] = limiter(WL[:,1:-1], W[:,0:-1], W[:,1:])
     # WL[:,0] and  WL[:,-1] are not limited
@@ -522,3 +615,274 @@ def getVarsFromX_vectorized(x, options):
       rhoE = x[2*nx:,:]
     return rho,rhoU,rhoE
 
+
+def getCFLtimestep(t,x,options):
+    """ Returns the CFL=1 time step """
+    dx = options['mesh']['cellSize']
+    ncells = dx.size
+
+    ##### recover conserved variables
+    rho, rhoU, rhoE = getVarsFromX(x,options)
+    temp = computeOtherVariables(rho, rhoU, rhoE)
+    u = temp['u']
+    a = temp['a']
+    dt = dx / np.maximum(np.abs(u+a),np.abs(u-a))
+    return np.min(dt)
+
+def limitValues(W):
+    """ Limit conserved variables based on bounds on the intensive variables """
+    PRESSURE_MIN = 10.
+    T_MIN = 10.
+    # compute current intensive variables
+    rho, rhoU,rhoE = W[0,:], W[1,:], W[2,:]
+    out = computeOtherVariables(rho=rho, rhoU=rhoU, rhoE=rhoE)
+    u,P,E,H,a,T = out['u'], out['P'], out['E'], out['H'], out['a'], out['T']
+
+    # find where bounds are violated and correct the intensive variables
+    bModif = False
+    I = np.where(P<PRESSURE_MIN)[0]
+    if len(I)>0:
+        P[I] = PRESSURE_MIN
+        bModif = True
+    I = np.where(T<T_MIN)[0]
+    if len(I)>0:
+        T[I] = T_MIN
+        bModif = True
+
+    if bModif:
+        # compute corrected conserved variables
+        rho = computeRho(P=P, T=T)
+        rhoU = rho * u
+        rhoE = rho * computeE(T=T,u=u)
+        W[0,:], W[1,:], W[2,:] = rho, rhoU,rhoE
+    return W
+  
+def limit_stages(y,options):
+  W_new = np.vstack( getVarsFromX(y, options) ) 
+  W_new = limitValues(W=W_new)
+  y_new = getXFromVars( rho=W_new[0,:],
+                        rhoU=W_new[1,:],
+                        rhoE=W_new[2,:] )
+  return y_new
+  
+def rk_nssp_53( f, tn, un, dt, limitfun=lambda y: y ):
+    """RK NSSP (5,3)
+        Runge-Kuta method with 5 stages, of order 3
+        f     function f(t,u)
+        tn    current time
+        un    current solution at time tn
+        dt    time step to the next time
+
+        return unp1 solution at time tn
+
+
+        source: https://josselin.massot.gitlab.labos.polytechnique.fr/ponio/viewer.html#rk_nssp_53
+    """
+    def lf(t,y):
+      return f(t,limitfun(y))
+    k1 = lf(tn, un)
+    k2 = lf(tn+dt/7,    dt*k1/7 + un )
+    k3 = lf(tn+3*dt/16, 3*dt*k2/16 + un)
+    k4 = lf(tn+dt/3,    dt*k3/3 + un)
+    k5 = lf(tn+2*dt/3,  2*dt*k4/3 + un)
+    return limitfun( dt*(k1/4 + 3*k5/4) + un ), 5 # sol and fun evals
+
+def CFLintegration(fun,t_span,cfl,y0,methodclass, max_step=np.inf,
+                   nmax_step=np.inf, relvar_min=None, datalogger=None,
+                   jacband=None, limitVars=False,events=None, options=None,
+                   logger=print, log_every=0.):
+    """ CFL-driven time integration
+        Inputs:
+            - fun : callable
+                model function that returns the time derivative of the state vector y
+            - cflfun : callable
+                function which returns the time step such that CFL<=1 everywhere
+            - cfl : float
+                desired CFL number
+            - t_span : list, tuple, array_like
+                Start and end times
+            - y0 : Numpy array
+                initial solution
+            - method : solver object, e.g. from scipy.integrate import RK23
+                only explicit methods should be used here, because of the way the CFL
+                time step is enforced
+                TODO: other solvers
+        Output:
+            - sol: bunch object containing the solution history
+    """
+    # if callable(events):
+    #     events = list(events)
+
+    from scipy.integrate._ivp.ivp import OdeResult
+    from scipy.integrate._ivp.ivp import handle_events, find_active_events, prepare_events
+
+    t_old = t_span[0]
+    y_old = y0.copy()
+    yhist=[y_old]
+    thist=[t_old]
+    
+    if limitVars:
+      limitfun = lambda y: limit_stages(y=y, options=options)
+    else:
+      limitfun = lambda y: y
+
+    if methodclass is None:
+        logger('using custom method')
+        class Method():
+            def __init__(self):
+                self.y=None
+                self.f=None
+                self.max_step = None
+                self.first_step = None
+                self.h_abs = None
+                self.nfev = 0
+                self.njev = 0
+                self.nlu = 0
+                self.t = None
+
+            def step(self):
+                dt = self.h_abs
+                self.y_old = self.y
+                self.y, nfev = rk_nssp_53( f=fun, tn=self.t, un=self.y, dt=dt, limitfun=limitfun )
+                self.t += dt
+                self.nfev += nfev
+
+        method = Method()
+        method.t = t_old
+        method.y = y_old
+        method.options=options
+    else:
+        logger('using Scipy solvers')
+        # raise Exception('should not be used (lacks limitation)')
+        method = methodclass(fun=fun, t0=t_span[0], y0=y0, t_bound=t_span[-1], max_step=np.inf,
+                             jacband=jacband, uband=jacband, lband=jacband, limitfun=limitfun,
+                             rtol=1e50, atol=1e50, vectorized=False, first_step=None,events=events)
+
+    events, is_terminal, event_dir = prepare_events(events)
+    terminate = False
+    if events is not None:
+        g = [event(t_old, y_old) for event in events]
+        t_events = [[] for _ in range(len(events))]
+        y_events = [[] for _ in range(len(events))]
+        active_events = find_active_events(g, g, event_dir)
+        if active_events.size > 0:
+            logger('Event occured at t0 !')
+            sol = lambda t: y_old
+            t_new = t_old
+            root_indices, roots, terminate = handle_events( sol, events, active_events, is_terminal, t_old, t_new)
+            for e, te in zip(root_indices, roots):
+                t_events[e].append(te)
+                y_events[e].append(sol(te))
+            if terminate:
+                t_new = roots[-1]
+                y_new = sol(t_new)
+    else:
+        t_events = None
+        y_events = None
+
+    last_out_t = t_old
+    if not terminate:
+      while t_old<t_span[-1]:
+        dt = min( (t_span[-1]-t_old, cfl*getCFLtimestep(t_old,y_old, options)) )
+        if abs(last_out_t - t_old) > log_every:
+          logger(f't={t_old:.3e}, dt={dt:.15e}')
+          last_out_t = t_old
+        method.max_step=dt
+        method.first_step=dt
+        method.h_abs=abs(dt)
+        method.h    =abs(dt)
+
+        try:
+          method.step()
+        except ValueError as e:
+          logger('issue: ', e)
+          raise e
+          break
+        except Exception as e:
+          logger('More problematic issue: ', e)
+          break
+        
+        t_new = method.t
+        y_new = method.y
+
+        dt_eff = t_new-t_old
+        if not np.allclose(dt_eff, dt, rtol=1e-2, atol=1e-12):
+            logger('dt     =',dt)
+            logger('dt_eff =', dt_eff)
+            # raise Exception('CFL was not maintained')
+        # if limitVars:
+        #   # Limit values based on non-conserved variables
+        #   y_new = limit_stages(y_new,options)
+        ##   W_new = np.vstack( getVariablesFromX(y_new, options) ) 
+        ##   W_new = limitValues(W=W_new, dxR=None, options=options)
+        ##   y_new = constructXfromVariables( rho=W_new[0,:],
+        ##                                    rhoU=W_new[1,:],
+        ##                                    rhoE=W_new[2,:],
+        ##                                    options=options )
+        ##   method.y = y_new
+
+        if events is not None:
+            g_new = [event(t_new, y_new) for event in events]
+            active_events = find_active_events(g, g_new, event_dir)
+            # TODO: precise event occurnece as in solve_ivp ?
+            # linear interpolation in the mean time...
+            sol = lambda t: y_old + (y_new - y_old) * ( t - t_old ) / (t_new - t_old)
+            if active_events.size > 0:
+                root_indices, roots, terminate = handle_events( sol, events, active_events, is_terminal, t_old, t_new)
+                for e, te in zip(root_indices, roots):
+                    t_events[e].append(te)
+                    y_events[e].append(sol(te))
+                if terminate:
+                    t_new = roots[-1]
+                    y_new = sol(t_new)
+                    logger(f'Event occured at t={t_new:.3e}')                    
+            g = g_new
+        if datalogger:
+          datalogger.log(t_new, y_new)
+        else: # backup of every step
+          thist.append(t_new)
+          yhist.append(y_new)
+        
+        if terminate:
+            logger('Termination due to event')
+            break
+          
+        if nmax_step<len(thist):
+          logger('maximum number of steps reached')
+          break
+      
+        if not (relvar_min is None):
+          dvardt = (y_new-y_old) / dt_eff
+          relvar = abs(dvardt/ (1e-9 + abs(y_old)) )  
+          maxrelvar_step = np.max(relvar)
+          if maxrelvar_step < relvar_min:
+            logger('relative solution variations < {relvar_min:.2e} --> early exit')
+            terminate = True
+            break
+          
+        t_old = t_new
+        y_old = y_new
+        
+    if datalogger: # add last time point anyway...
+      thist.append(t_new)
+      yhist.append(y_new)
+    out = OdeResult()
+    out.t_events = t_events
+    out.y_events = y_events
+    if not terminate:
+        out.status = 0
+        if not np.allclose(thist[-1],t_span[-1], rtol=1e-10, atol=1e-10):
+          logger(' /!\ end point not reached')
+    else:
+        out.status = 1
+
+    out.nfev = method.nfev
+    out.njev = method.njev
+    out.nlu  = method.nlu
+    out.t = np.array(thist)
+    out.y = np.array(yhist).T
+    out.message = 'success'
+    out.success = True
+    out.sol = None
+
+    return out
