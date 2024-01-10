@@ -58,28 +58,44 @@ def interfaceRiemannExact(WL,WR,options):
     # W = [rho rhoU, rhoE]
     # gives the exact solution of the riemann problem at x=0 and t=0
     if WL.ndim==1: # single face evaluation
-      rho,u,P =  Riemann_exact_from_conserved(t=0.,g=gamma,WL=WL,WR=WR,grid=np.array([0.]))
-      star_state = np.array([rho[0], rho[0]*u[0], 0.5*u[0]*u[0] + P[0]/((gamma-1)*rho[0])]) #same variables as input
+      rho,u,P =  Riemann_exact_from_conserved(t=1e-9,g=gamma,
+                                              WL=WL,WR=WR,
+                                              grid=np.array([0.]))
+      star_state = np.array([rho[0],
+                             rho[0]*u[0],
+                             rho[0]*(0.5*u[0]*u[0] + P[0]/((gamma-1)*rho[0]))]) #same variables as input
     else:
       star_state = np.zeros_like(WL)
       npts = WL.shape[1] 
       for i in range(npts):
-        rho,u,P =  Riemann_exact_from_conserved(t=0.,g=gamma,WL=WL[:,i],WR=WR[:,i],grid=np.array([0.]))
-        star_state[:,i] = np.array([rho[0], rho[0]*u[0], 0.5*u[0]*u[0] + P[0]/((gamma-1)*rho[0])])
-    return star_state
+        rho,u,P =  Riemann_exact_from_conserved(t=1e-9,g=gamma,
+                                                WL=WL[:,i],
+                                                WR=WR[:,i],
+                                                grid=np.array([0.]))
+        star_state[0,i]  = rho[0]
+        star_state[1,i]  = rho[0]*u[0]
+        star_state[2,i]  = rho[0]*computeE(T=computeT(P=P[0], rho=rho[0]), u=u[0])
+        # if np.any(np.isnan(star_state)):
+          # import pdb; pdb.set_trace()
+          # pass
+    # TODO: space-time integration over dt*[-max(abs(lbda)), max(abs(lbda))] in space and dt in time ?
+    return fluxEulerPhysique(W=star_state)
 
 def Riemann_exact_from_conserved(t,g,WL,WR,grid):
     """ Interface for use with [rho, rho*u, rho*E] """
     rho, rhoU, rhoE = WL[0], WL[1], WL[2]
     temp = computeOtherVariables(rho, rhoU, rhoE)
-    Wl_adapt = [rho, temp['u'], temp['P']]
+    Wl_adapt = np.array([rho, temp['u'], temp['P']])
 
     rho, rhoU, rhoE = WR[0], WR[1], WR[2]
     temp = computeOtherVariables(rho, rhoU, rhoE)
-    Wr_adapt = [rho, temp['u'], temp['P']]
+    Wr_adapt = np.array([rho, temp['u'], temp['P']])
 
     # gives the exact solution of the riemann problem at x=0 and t=0
-    return  Riemann_exact(t=t, g=gamma, Wl=Wl_adapt, Wr=Wr_adapt, grid=grid)
+    return  Riemann_exact(t=t, g=g, Wl=Wl_adapt, Wr=Wr_adapt, grid=grid)
+
+import scipy.optimize
+f_p2p1 = lambda r,Wl,Wr,g,c1,c4,r41: np.abs( r41-r* np.power(1+((g-1)/(2*c4))*(Wl[1]-Wr[1]-(c1/g)*((r-1)/np.sqrt(1+(r-1)*((g+1)/(2*g))))),(-2*g/(g-1))))
 
 def Riemann_exact(t,g,Wl,Wr,grid):
     """ Computes the exact solution of the Riemann problem with the state
@@ -93,16 +109,16 @@ def Riemann_exact(t,g,Wl,Wr,grid):
     r41 = Wl[2]/Wr[2]
     c1  = np.sqrt(g*Wr[2]/Wr[0])
     c4  = np.sqrt(g*Wl[2]/Wl[0])
-    # f_p2p1 = lambda r,Wl,Wr,g,c1,c4,r41: r41-r* np.power(1+((g-1)/(2*c4))*(Wl[1]-Wr[1]-(c1/g)*((r-1)/np.sqrt(1+(r-1)*((g+1)/(2*g))))),(-2*g/(g-1)))
-    # opt_fun = lambda x: f_p2p1(x,Wl,Wr,g,c1,c4,r41)
-    # out = scipy.optimize.brentq(opt_fun, 0., 1e1, args=(), xtol=1e-10, rtol=1e-10, maxiter=100, full_output=False, disp=True)
-    # r21 = out
-    # out = scipy.optimize.newton(func=opt_fun, x0=3., fprime=None, args=(), tol=1.48e-08, maxiter=50, fprime2=None, x1=None, rtol=1e-10, full_output=False, disp=True)
-    # r21 = out.x
-    f_p2p1 = lambda r,Wl,Wr,g,c1,c4,r41: np.abs( r41-r* np.power(1+((g-1)/(2*c4))*(Wl[1]-Wr[1]-(c1/g)*((r-1)/np.sqrt(1+(r-1)*((g+1)/(2*g))))),(-2*g/(g-1))))
-    import scipy.optimize
-    out = scipy.optimize.minimize(fun = lambda x: f_p2p1(x,Wl,Wr,g,c1,c4,r41), x0=3, bounds=((0,np.inf),) )
-    r21 = out.x[0]
+
+    opt_fun = lambda x: f_p2p1(x,Wl,Wr,g,c1,c4,r41)
+    # r21 = scipy.optimize.brentq(opt_fun, 0., 1e1, args=(), xtol=1e-10, rtol=1e-10, maxiter=100, full_output=False, disp=True)
+    r21 = scipy.optimize.newton(func=opt_fun, x0=3., tol=1e-10, maxiter=50,
+                                rtol=1e-10, full_output=False, disp=False)
+    assert opt_fun(r21)<1e-7, 'Newton did not converge'
+    # out = scipy.optimize.minimize(fun = lambda x: f_p2p1(x,Wl,Wr,g,c1,c4,r41),
+                                  # x0=3, bounds=((0,np.inf),),
+                                  # tol=1e-10)
+    # r21 = out.x[0]
 
     # Compute the remainder of properties in region 2 (post-shock)
     v2 = Wr[1] + (c1/g)*(r21-1)/np.sqrt(1+((g+1)/(2*g))*(r21-1))
@@ -169,7 +185,7 @@ def fluxEulerPhysique(W):
         bReshaped=True
     else:
         bReshaped=False
-    rho = W[0,:]
+    rho  = W[0,:]
     rhoU = W[1,:]
     rhoE = W[2,:]
 
@@ -188,7 +204,7 @@ def fluxEulerPhysique(W):
 
 
 def HLLC_solver(WL,WR,options):
-    """ HLLC approximate Riemann solver, as described in Toro's boo"""
+    """ HLLC approximate Riemann solver, as described in Toro's book """
     if len(WR.shape)<2:
         WR = WR.reshape(WR.shape[0],1)
         WL = WL.reshape(WL.shape[0],1)
@@ -246,9 +262,9 @@ def HLLC_solver(WL,WR,options):
     I = np.where(SR<=0)
     face_flux[:,I] = fluxEulerPhysique(WR[:,I])
     total = total + np.size(I)
-#     if total != SR.size: # some faces have not be solved
-# #    if np.isnan(SR+SL+Sstar).any():
-#         raise Exception('problem HLL UNRESOLVED CASE')
+    # if total != SR.size: # some faces have not be solved
+#    if np.isnan(SR+SL+Sstar).any():
+        # raise Exception('problem HLL UNRESOLVED CASE')
 
     if bReshaped:
         return face_flux.reshape((face_flux.size,))
@@ -320,12 +336,17 @@ def naive_centered_solver(WL,WR,options):
   # add artificial dissipation
   dWdx_faces = np.zeros_like(W)
   xfaces = options['mesh']['faceX']
+  xfaces = options['mesh']['faceX']
   xgaps = options['mesh']['dxBetweenCellCenters']
   for i in range(3):
-      dWdx_faces[i,1:-1] = (W[i,1:]-W[i,:-1])/xgaps
-      dWdx_faces[i,0] = (W[i,0]-W[i,1])/(xfaces[0]-xfaces[1])
-      dWdx_faces[i,-1] = (W[i,-1]-W[i,-2])/(xfaces[-1]-xfaces[-2])
-  D = 2*1e1
+      # dWdx_faces[i,1:-1] = (W[i,1:] - W[i,:-1]) / xgaps
+      # dWdx_faces[i,0]    = (W[i,0]  - W[i,1])   / (xfaces[0]  - xfaces[1])
+      # dWdx_faces[i,-1]   = (W[i,-1] - W[i,-2])  / (xfaces[-1] - xfaces[-2])
+      # wrong but let's try
+      dWdx_faces[i,1:-1] = (WR[i,1:-1] - WL[i,1:-1]) / xgaps
+      dWdx_faces[i,0]    = (WR[i,0]    - WL[i,0])    / xgaps[0]
+      dWdx_faces[i,-1]   = (WR[i,-1]   - WL[i,-1])   / xgaps[-1]
+  D = 2*1e0 # TODO: dynamic artificial viscosity
   dissipation_flux = -D*dWdx_faces
   face_flux = face_flux + dissipation_flux
   return face_flux
@@ -425,10 +446,23 @@ def modelfun(t,x,options, estimate_space_error=False):
             # states at the boundaries
             WR[i,0]  = W[i,0]  + delta_cells[i,0 ]*(xfaces[0]-xcells[0])
             WL[i,-1] = W[i,-1] + delta_cells[i,-1]*(xfaces[-1]-xcells[-1])
+            
+    elif nReconstruction==2:
+        # piecewise parabolic, upwind biased
+        # calcul des valeurs aux faces
+        from scipy.interpolate import lagrange
+        for i in range(3):
+            # /!\ We don't use the differences as in Toro's book, but rather the gradients
+            # --> better for non-uniform meshes
+            for ix in range(nx+1):
+              WL[i,ix]  =  lagrange(x=xcells[max(ix-2,0):min(nx,ix+2)], w=W[i, max(ix-2,0):min(nx,ix+2)])( xfaces[ix] )
+              WR[i,ix]  =  lagrange(x=xcells[max(ix-1,0):min(nx,ix+3)], w=W[i, max(ix-1,0):min(nx,ix+3)])( xfaces[ix] )
+            
+            
     else:
       raise Exception('Unknown recosntruction type {}'.format(nReconstruction))
       
-    # COnstruct ghost states for the boundaries
+    # Construct ghost states for the boundaries
     if options['BCs']['left']['type']=="transmissive":
         ghost_state_L = W[:,0]
     elif options['BCs']['left']['type']=="reflective":
@@ -497,27 +531,40 @@ def modelfun(t,x,options, estimate_space_error=False):
           dx_opt = dx_faces/np.sqrt(err)
 
         elif spaceerrmode==4:
-          # 2 - gradient of density
+          # 2 - gradient of flow variables
           dx_faces = np.hstack((options['mesh']['cellX'][0]-options['mesh']['faceX'][0],
                                 options['mesh']['dxBetweenCellCenters'],
                                 options['mesh']['faceX'][-1]-options['mesh']['cellX'][-1],
                                ))
-          dx_opt = np.zeros((nx+1),)
-          for i in range(1,nx-1):
-            v1 = rho[:-1]
-            v2 = rho[1:]
-            err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
-            dx_opt[1:-1] = dx_faces[1:-1] / err
-          # boundaries
-          v1 = WL[0,0]
-          v2 = rho[0]
-          err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
-          dx_opt[0] = dx_faces[0] / err
+          dx_opt = None
           
-          v1 = WL[0,-1]
-          v2 = rho[-1]
-          err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
-          dx_opt[-1] = dx_faces[-1] / err
+          for var_left, var_centers, var_right in (
+              (WR[0,0], rho, WL[0,-1]),
+              (WR[1,0]/WR[0,0], u, WL[1,-1]/WL[0,-1]),
+              ):
+            
+            dx_opt_var = np.zeros((nx+1),)
+
+            v1 = var_centers[:-1]
+            v2 = var_centers[1:]
+            err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
+            dx_opt_var[1:-1] = dx_faces[1:-1] / err
+            
+            # boundaries
+            v1 = var_left
+            v2 = var_centers[0]
+            err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
+            dx_opt_var[0] = dx_faces[0] / err
+            
+            v1 = var_centers[-1]
+            v2 = var_right
+            err = abs(v1-v2) / ( atol + rtol * np.minimum(abs(v1), abs(v2)) )
+            dx_opt_var[-1] = dx_faces[-1] / err
+            
+            if dx_opt is None:
+              dx_opt = dx_opt_var.copy()
+            else:
+              dx_opt = np.minimum(dx_opt_var, dx_opt)
         
         else:
           raise Exception(f'Space error estimation method {spaceerrmode} does not exist')
@@ -781,91 +828,101 @@ def CFLintegration(fun,t_span,cfl,y0,methodclass, max_step=np.inf,
         y_events = None
 
     last_out_t = t_old
-    if not terminate:
-      while t_old<t_span[-1]:
-        dt = min( (t_span[-1]-t_old, cfl*getCFLtimestep(t_old,y_old, options)) )
-        if abs(last_out_t - t_old) > log_every:
-          logger(f't={t_old:.3e}, dt={dt:.15e}')
-          last_out_t = t_old
-        method.max_step=dt
-        method.first_step=dt
-        method.h_abs=abs(dt)
-        method.h    =abs(dt)
-
-        try:
-          method.step()
-        except ValueError as e:
-          logger('issue: ', e)
-          raise e
-          break
-        except Exception as e:
-          logger('More problematic issue: ', e)
-          break
-        
-        t_new = method.t
-        y_new = method.y
-
-        dt_eff = t_new-t_old
-        if not np.allclose(dt_eff, dt, rtol=1e-2, atol=1e-12):
-            logger('dt     =',dt)
-            logger('dt_eff =', dt_eff)
-            # raise Exception('CFL was not maintained')
-        # if limitVars:
-        #   # Limit values based on non-conserved variables
-        #   y_new = limit_stages(y_new,options)
-        ##   W_new = np.vstack( getVariablesFromX(y_new, options) ) 
-        ##   W_new = limitValues(W=W_new, dxR=None, options=options)
-        ##   y_new = constructXfromVariables( rho=W_new[0,:],
-        ##                                    rhoU=W_new[1,:],
-        ##                                    rhoE=W_new[2,:],
-        ##                                    options=options )
-        ##   method.y = y_new
-
-        if events is not None:
-            g_new = [event(t_new, y_new) for event in events]
-            active_events = find_active_events(g, g_new, event_dir)
-            # TODO: precise event occurnece as in solve_ivp ?
-            # linear interpolation in the mean time...
-            sol = lambda t: y_old + (y_new - y_old) * ( t - t_old ) / (t_new - t_old)
-            if active_events.size > 0:
-                root_indices, roots, terminate = handle_events( sol, events, active_events, is_terminal, t_old, t_new)
-                for e, te in zip(root_indices, roots):
-                    t_events[e].append(te)
-                    y_events[e].append(sol(te))
-                if terminate:
-                    t_new = roots[-1]
-                    y_new = sol(t_new)
-                    logger(f'Event occured at t={t_new:.3e}')                    
-            g = g_new
-        if datalogger:
-          datalogger.log(t_new, y_new)
-        else: # backup of every step
-          thist.append(t_new)
-          yhist.append(y_new)
-        
-        if terminate:
-            logger('Termination due to event')
+    try:
+      if not terminate:
+        while t_old<t_span[-1]:
+          dt = min( (t_span[-1]-t_old, cfl*getCFLtimestep(t_old,y_old, options)) )
+          if abs(last_out_t - t_old) > log_every:
+            logger(f't={t_old:.3e}, dt={dt:.15e}')
+            last_out_t = t_old
+          method.max_step=dt
+          method.first_step=dt
+          method.h_abs=abs(dt)
+          method.h    =abs(dt)
+  
+          try:
+            method.step()
+          except ValueError as e:
+            logger('issue: ', e)
+            raise e
+            break
+          except Exception as e:
+            logger('More problematic issue: ', e)
+            import traceback
+            print(traceback.format_exc())
+            # raise e
             break
           
-        if nmax_step<len(thist):
-          logger('maximum number of steps reached')
-          break
+          t_new = method.t
+          y_new = method.y
+          if np.any(np.isnan(y_new)):
+            print('NaNs have appeared')
+            break
+  
+          dt_eff = t_new-t_old
+          if not np.allclose(dt_eff, dt, rtol=1e-2, atol=1e-12):
+              logger('dt     =',dt)
+              logger('dt_eff =', dt_eff)
+              # raise Exception('CFL was not maintained')
+          # if limitVars:
+          #   # Limit values based on non-conserved variables
+          #   y_new = limit_stages(y_new,options)
+          ##   W_new = np.vstack( getVariablesFromX(y_new, options) ) 
+          ##   W_new = limitValues(W=W_new, dxR=None, options=options)
+          ##   y_new = constructXfromVariables( rho=W_new[0,:],
+          ##                                    rhoU=W_new[1,:],
+          ##                                    rhoE=W_new[2,:],
+          ##                                    options=options )
+          ##   method.y = y_new
+  
+          if events is not None:
+              g_new = [event(t_new, y_new) for event in events]
+              active_events = find_active_events(g, g_new, event_dir)
+              # TODO: precise event occurnece as in solve_ivp ?
+              # linear interpolation in the mean time...
+              sol = lambda t: y_old + (y_new - y_old) * ( t - t_old ) / (t_new - t_old)
+              if active_events.size > 0:
+                  root_indices, roots, terminate = handle_events( sol, events, active_events, is_terminal, t_old, t_new)
+                  for e, te in zip(root_indices, roots):
+                      t_events[e].append(te)
+                      y_events[e].append(sol(te))
+                  if terminate:
+                      t_new = roots[-1]
+                      y_new = sol(t_new)
+                      logger(f'Event occured at t={t_new:.3e}')                    
+              g = g_new
+          if datalogger:
+            datalogger.log(t_new, y_new)
+          else: # backup of every step
+            thist.append(t_new)
+            yhist.append(y_new)
+          
+          if terminate:
+              logger('Termination due to event')
+              break
+            
+          if nmax_step<len(thist):
+            logger('maximum number of steps reached')
+            break
+        
+          if not (relvar_min is None):
+            dvardt = (y_new-y_old) / dt_eff
+            relvar = abs(dvardt/ (1e-9 + abs(y_old)) )  
+            maxrelvar_step = np.max(relvar)
+            if maxrelvar_step < relvar_min:
+              logger('relative solution variations < {relvar_min:.2e} --> early exit')
+              terminate = True
+              break
+            
+          t_old = t_new
+          y_old = y_new
+          
+      if datalogger: # add last time point anyway...
+        thist.append(t_new)
+        yhist.append(y_new)
+    except KeyboardInterrupt:
+      print('Early exit (user got bored ?')
       
-        if not (relvar_min is None):
-          dvardt = (y_new-y_old) / dt_eff
-          relvar = abs(dvardt/ (1e-9 + abs(y_old)) )  
-          maxrelvar_step = np.max(relvar)
-          if maxrelvar_step < relvar_min:
-            logger('relative solution variations < {relvar_min:.2e} --> early exit')
-            terminate = True
-            break
-          
-        t_old = t_new
-        y_old = y_new
-        
-    if datalogger: # add last time point anyway...
-      thist.append(t_new)
-      yhist.append(y_new)
     out = OdeResult()
     out.t_events = t_events
     out.y_events = y_events

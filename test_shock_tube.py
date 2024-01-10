@@ -13,7 +13,7 @@ walls.
 @author: laurent
 """
 from Euler_FV_scheme import modelfun, setupFiniteVolumeMesh, Riemann_exact, plotfuncustom,computeT, computeP, getXFromVars, getVarsFromX, getVarsFromX_vectorized, computeOtherVariables
-from Euler_FV_scheme import cv ,r, gamma
+from Euler_FV_scheme import cv, r, gamma
 import numpy as np
 import scipy.integrate as integrate
 import matplotlib.pyplot as plt
@@ -34,7 +34,7 @@ options['BCs']['left']['type']  = "reflective"
 options['BCs']['right']['type'] = "reflective"
 
 # Generate the faces of the mesh
-xfaces = np.linspace(-10,10,1000)
+xfaces = np.linspace(-1,1,100)
 
 # Generate the corresponding mesh
 options['mesh'] = setupFiniteVolumeMesh(xfaces,{})
@@ -145,14 +145,14 @@ else:
                 nmax_step=np.inf, relvar_min=None, datalogger=None,
                 jacband=None, limitVars=False,events=None, options=options,
                 logger=print, log_every=0.)
-#%% backup the result
-from utilities import NumpyEncoder
-import json
-outdict= {"options": options,
-          "y": out.y,
-          't': out.t}
-with open('backup2.json','w') as f: #TODO: binary file to save space
-  json.dump(outdict, f, cls=NumpyEncoder)
+# #%% backup the result
+# from utilities import NumpyEncoder
+# import json
+# outdict= {"options": options,
+#           "y": out.y,
+#           't': out.t}
+# with open('backup2.json','w') as f: #TODO: binary file to save space
+#   json.dump(outdict, f, cls=NumpyEncoder)
 
 
 #%% GATHER RESULTS
@@ -163,7 +163,8 @@ time = out.t
 # u[i,:] corresponds to the velocity field at the i-th time step
 
 #%% Plot the solution at multiple instants
-selected_time_indices = [-1] #[ i.astype(int) for i in np.linspace(0,time.size-1,20) ]
+# selected_time_indices = [-1] #[ i.astype(int) for i in np.linspace(0,time.size-1,20) ]
+selected_time_indices = range(time.size)
 plotfuncustom(xcells, P.T, time, 'P', selected_time_indices, marker=None)
 plotfuncustom(xcells, u.T, time, 'u', selected_time_indices, marker=None)
 plotfuncustom(xcells, rho.T, time, 'rho', selected_time_indices, marker=None)
@@ -193,7 +194,7 @@ plt.xlabel('x (m)')
 plt.ylabel(r'$\rho$ (kg.m$^{-3}$)')
 plt.title('Density')
 plt.legend()
-plt.xlim(-10,10); plt.ylim(0,1.1); plt.grid()
+plt.xlim(-1,1); plt.ylim(0,1.1); plt.grid()
 # plt.savefig('comparison_density_FVS_r1l1.png', dpi=300)
 
 #%%

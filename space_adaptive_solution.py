@@ -131,6 +131,7 @@ def space_adapt_integration(fun,t_span, cfl, init_fun, x_interval,
               if nt==0:
                 node1.recursive_set_value(init_fun) # initialise field
               else:
+                # TODO: nice conservative linear interpolation ?
                 # bRefineFurther = False # TODO: improve
                 pass
               
@@ -251,16 +252,16 @@ if __name__=='__main__':
   x_interval = [-length/2, length/2]
   
   # mesh adaptation parameters
-  dx_min = length/1e3
+  dx_min = length/3e4
   dx_max = length/10
   # dx = length/(2**p)
   min_level = np.ceil( np.log(length/dx_max)/np.log(2) ).astype(int)
   max_level = np.ceil( np.log(length/dx_min)/np.log(2) ).astype(int)
-  options['mesh']['adapt']={"mode":2,
+  options['mesh']['adapt']={"mode":1,
                             "atol":1e-2, "rtol":1e-2}
   
   # Specifiy the physical duration of the simulation
-  tend= 0.01
+  tend= 0.05
   
   
   # Generate the initial condition
@@ -281,7 +282,7 @@ if __name__=='__main__':
   
   
   # compute evolution
-  out = space_adapt_integration(fun=modelfun, t_span=(0., tend), cfl=0.3,
+  out = space_adapt_integration(fun=modelfun, t_span=(0., tend), cfl=0.4,
                                 init_fun=init_fun, x_interval=x_interval,
                                options=options, level0=min_level, max_level=max_level,
                                nmax_step=np.inf, refine_every=1,
@@ -293,13 +294,14 @@ if __name__=='__main__':
   out.rhoU = [y[:,1] for y in out.y]
   out.rhoE = [y[:,2] for y in out.y]
   
-  out.u, out.P, out.T, out.E, out.H = [], [], [], [], []
+  out.u, out.P, out.T, out.E, out.H, out.M = [], [], [], [], [], []
   for it in range(len(out.y)):
     temp = computeOtherVariables(out.rho[it], out.rhoU[it], out.rhoE[it])
     out.T.append( temp['T'] )
     out.P.append( temp['P'] )
     out.u.append( temp['u'] )
     out.E.append( temp['E'] )
+    out.M.append( temp['M'] )
     out.H.append( temp['H'] )
     
   #%% Compute numerical Schlieren
@@ -311,15 +313,21 @@ if __name__=='__main__':
   out.log10schlieren = [np.log10(np.abs(a)) for a in out.schlieren]
   
   #%% Plot
+  tmaxplot = 25e-3
+  # tmaxplot = out.t[-1]
+
+  import matplotlib as mpl
+  from matplotlib import cm
   step = out.t.size//1000
-  for var, varname, lims in (
-          (out.rho, 'density', [0,1]),
-          (out.T, 'T', [None, None]),
-          (out.P, 'P', [None, None]),
-          (out.u, 'u', [None, None]),
-          (out.schlieren, 'Schlieren', [None, None]),
-          (out.log10schlieren, 'Schlieren', [1, 8]),
-          (out.mesh_levels, 'mesh levels', [None, None]),
+  for var, varname, clabel, lims, cmap in (
+          # (out.rho,       'Density', r'$\rho$ (kg/m$^3$)', [0,1],        None),
+          (out.T,         'T',       r'$T$ (K)',           [None, None], 'hot'),
+          # (np.array(out.P)/1e5,     'P',       r'$P$ (bar)',        [None, None], None),
+          # (out.u,         'Velocity',r'$u$ (m/s)',         [None, None], None),
+          # (out.M, 'Mach', 'M', [-1, 1], 'seismic'),
+          # (out.schlieren, 'Schlieren', None, [None, None], cm.binary),
+          # (out.log10schlieren, 'Schlieren', None, [1, None], cm.binary),
+          # (out.mesh_levels,    'Mesh refinement levels', 'level', [None, None], None),
         ):
     plt.figure(dpi=300)
     if lims[0] is None:
@@ -330,28 +338,79 @@ if __name__=='__main__':
       plt.pcolormesh(out.mesh_faces[it],
                      [out.t[it], out.t[min(out.t.size-1, it+step)]],
                      [var[it]],
-                     vmin=lims[0], vmax=lims[1])
+                     vmin=lims[0], vmax=lims[1], cmap=cmap)
       if it==0:
-        plt.colorbar()
+        if not (clabel is None):
+          plt.colorbar(label=clabel)
+        
       #edgecolors='black')
     plt.xlabel('x')
     plt.ylabel('t')
+    plt.ylim(0, tmaxplot)
     plt.title(varname)
+    if len(varname)>1:
+      varname = varname.lower()
+    plt.savefig('{}_mod{}.png'.format(varname.replace(' ','_'),
+                                      options['mesh']['adapt']["mode"]),
+                dpi=300)
+    plt.show()
   
   
   #%% Plot mesh statistics
   plt.figure()
   plt.plot(out.t, [a.size for a in out.mesh_centers])
   plt.grid()
+  plt.xlim(0, tmaxplot)
+  plt.ylim(0, None)
   plt.xlabel('t')
   plt.ylabel('mesh size')
   plt.title('Mesh size evolution')
+  plt.savefig('mesh_size_mod{}.png'.format(options['mesh']['adapt']["mode"]), dpi=300)
   
+  #%% Plot level population
+  plt.figure()
+  m2 = max([max(a) for a in out.mesh_levels])
+  m1 = min([min(a) for a in out.mesh_levels])
+  for ilevel in range (m1, m2+1):
+    count = [np.count_nonzero(a==ilevel) for a in out.mesh_levels]
+    plt.semilogy(out.t, count, label=f'{ilevel}')
+  plt.grid()
+  plt.legend()
+  plt.xlim(0, tmaxplot)
+  plt.ylim(0, None)
+  plt.xlabel('t')
+  plt.ylabel('mesh size')
+  plt.title('Mesh distribution per level')
+  plt.savefig('mesh_level_pop_mod{}.png'.format(options['mesh']['adapt']["mode"]), dpi=300)
+  
+  #%% Plot compression ratio
+  plt.figure()
+  max_level_each_step = np.array([np.max(a) for a in out.mesh_levels])
+  uniform_nb_pts = length/(2**max_level_each_step)
+  plt.semilogy(out.t, [uni / a.size for (a,uni) in zip(out.mesh_centers, uniform_nb_pts)])
+  plt.grid()
+  plt.xlim(0, tmaxplot)
+  plt.xlabel('t')
+  plt.ylabel('')
+  plt.title('Mesh compression (vs uniform)')
+  plt.savefig('mesh_compression_mod{}.png'.format(options['mesh']['adapt']["mode"]))
+  
+  #%% Total energy
+  plt.figure()
+  plt.semilogy(out.t, [sum(rhoE*np.diff(xfaces)) for (rhoE,xfaces) in zip(out.rhoE, out.mesh_faces)])
+  plt.grid()
+  plt.xlim(0, tmaxplot)
+  plt.xlabel('t')
+  plt.ylabel('Total energy')
+  plt.title('Evolution of the overall energy')
+  # plt.savefig('mesh_compression_mod{}.png'.format(options['mesh']['adapt']["mode"]))
+  
+
   #%% Compare with analytical solution
   # /!\ The analytical solution assumes the initial discontinuity is at x=0
   from Euler_FV_scheme import Riemann_exact_from_conserved
   # for it in range(0,out.t.size,100):
-  for it in [-1]:
+  for it in [1000]:
     ysol = out.y[it]
     time = out.t[it]-out.t[0]
     mesh=out.mesh_centers[it]
@@ -369,12 +428,13 @@ if __name__=='__main__':
   
     plt.figure()
     plt.plot(mesh_exact, rho_exact, color='r', label='exact')
-    plt.scatter(mesh, ysol[:,0], color='b', label='simulation', marker='+')
+    plt.scatter(mesh, ysol[:,0], color='b', label='simulation', marker='.')
     plt.xlabel('x (m)')
     plt.ylabel(r'$\rho$ (kg.m$^{-3}$)')
     plt.title('Density')
     plt.suptitle(f't={time:.3e}')
     plt.xlim(x_interval[0], x_interval[1]); plt.ylim(0,1.1); plt.grid()
     plt.legend()
-    plt.show()
+    plt.savefig('analytical_comparison_mod{}.png'.format(options['mesh']['adapt']["mode"]), dpi=300)
+
  
