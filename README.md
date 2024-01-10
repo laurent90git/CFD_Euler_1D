@@ -1,5 +1,5 @@
-# 1 compressible Euler flo solver with adaptive mesh refinement
-One-dimensional solver for the compressible Euler equations, written in Python.
+# One-dimensional adaptive solver for the compressible Euler equations
+Solver with adaptive mesh refinement written in Python.
 Multiple Riemann solvers (HLLC, Flux Vector Splitting) are implemented, based on [1]. The spatial scheme can be of order 1 (piecewise constant) or 2 (MUSCL-Hancock scheme with linear reconstruction). A minmod limiter is also avaible.
 The temporal integration is either first-order (Explicit Euler), third-order (SSP Runge-Kutta method), or any of Scip's 'solve_ivp' methods.
 Dynamic time step is available (either via error estimates with Scipy or via a CFL condition).
